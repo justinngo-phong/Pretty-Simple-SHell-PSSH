@@ -28,7 +28,11 @@ typedef struct {
 	unsigned int npids;
 	pid_t pgid;
 	JobStatus status;
+	int job_num;
 } Job;
+
+// global current job pointer and current job number
+Job *curr_job;
 
 void print_banner ()
 {
@@ -129,7 +133,7 @@ void handler(int sig) {
 		while ((chld = waitpid(-1, &status, WNOHANG|WUNTRACED|WCONTINUED)) > 0) {
 			if (WIFSTOPPED(status)) {
 				set_fg_pgrp(0);
-				
+				printf("[%d] + suspended\t%s\n", curr_job->job_num, curr_job->name);
 			} else {
 				set_fg_pgrp(0);
 			}
@@ -138,13 +142,13 @@ void handler(int sig) {
 }
 
 // add new job to job array and return job number
-int add_new_job(Job* new_job, Job** jobs) {
+void add_new_job(Job* new_job, Job** jobs) {
 	int i=0;
 	while (jobs[i] != NULL) {
 		i++;
 	}
 	jobs[i] = new_job;
-	return i;
+	jobs[i]->job_num = i;
 }
 
 void delete_job(int job_num, Job** jobs) {
@@ -184,7 +188,7 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 	J->pids = pid;
 	J->npids = P->ntasks;
 
-	int curr_job_num = add_new_job(J, jobs);
+	add_new_job(J, jobs);
 
     for (t = 0; t < P->ntasks; t++) {
 		if (!strcmp(P->tasks[t].cmd, "exit")) {
@@ -200,15 +204,15 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 				printf("pssh: failed to create pipe\n");
 				exit(EXIT_FAILURE);
 			}
-		pid[t] = fork();
-		if (pid[t] == -1) {
-			printf("pssh: failed to fork\n");
-			exit(EXIT_FAILURE);
-		}
-		setpgid(pid[t], pid[0]);
-		J->pgid = pid[0];
-		J->status = FG;
-		set_fg_pgrp(pid[0]);
+			pid[t] = fork();
+			if (pid[t] == -1) {
+				printf("pssh: failed to fork\n");
+				exit(EXIT_FAILURE);
+			}
+			setpgid(pid[t], pid[0]);
+			J->pgid = pid[0];
+			J->status = FG;
+			set_fg_pgrp(pid[0]);
 
 
 			if (pid[t] == 0) { /* Child Process */
@@ -299,7 +303,7 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 		int status;
 		waitpid(pid[t], &status, WNOHANG);
 	}
-	delete_job(curr_job_num, jobs);
+	delete_job(J->job_num, jobs); 
 }
 
 int main (int argc, char** argv)
@@ -316,6 +320,7 @@ int main (int argc, char** argv)
 
     while (1) {
 		Job* new_job=malloc(sizeof(Job));
+		curr_job = new_job;
 		char *prompt = build_prompt();
         cmdline = readline (prompt);
 		free(prompt);
