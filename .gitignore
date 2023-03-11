@@ -49,8 +49,10 @@
 	modules.order
 	Module.symvers
 	Mkfile.old
-	dkms.conferintf("\nPC progression: ");
 
 # Folder
 	test/
 	demo/
+
+# Zip files
+	*.zip
