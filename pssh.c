@@ -116,9 +116,6 @@ void set_fg_pgrp(pid_t pgrp)
 	sav = signal(SIGTTOU, SIG_IGN);
 	tcsetpgrp(STDOUT_FILENO, pgrp);
 	signal(SIGTTOU, sav);
-	
-	while (tcgetpgrp(STDOUT_FILENO) != getpgrp())
-		pause();	
 }
 
 void terminate_job(int job_num, Job** jobs) {
@@ -132,8 +129,7 @@ void handler(int sig) {
 	int status;
 	
 	if ((sig == SIGTTOU) || (sig == SIGTTIN)) {
-		//while (tcgetpgrp(STDOUT_FILENO) != getpgrp()) 
-		while (tcgetpgrp(0) != getpgrp()) 
+		while (tcgetpgrp(STDOUT_FILENO) != getpgrp()) 
 			pause();
 	} else if (sig == SIGCHLD) {
 		while ((chld = waitpid(-1, &status, WNOHANG|WUNTRACED|WCONTINUED)) > 0) {
@@ -141,10 +137,8 @@ void handler(int sig) {
 				set_fg_pgrp(0);
 				curr_job->status = STOPPED;
 				printf("[%d] + suspended\t%s\n", curr_job->job_num, curr_job->name);
+				/*
 			} else if (WIFEXITED(status)) {
-				set_fg_pgrp(0);
-				terminate_job(curr_job->job_num, jobs);
-			} else {
 				// check to see if child is in foreground first
 				int chld_is_fg = 0;
 				if (getpgrp() == tcgetpgrp(STDOUT_FILENO)) {
@@ -152,11 +146,15 @@ void handler(int sig) {
 				}
 
 				set_fg_pgrp(0);
-				terminate_job(curr_job->job_num, jobs);
-
 				// if child was in background and finished, print the following
 				if (!chld_is_fg)
 					printf("[%d] + done\t%s\n", curr_job->job_num, curr_job->name);
+				terminate_job(curr_job->job_num, jobs);
+				*/
+			} else {
+				set_fg_pgrp(0);
+				terminate_job(curr_job->job_num, jobs);
+
 			}
 		}
 	}
@@ -211,6 +209,7 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 
 	J->status = FG;
 
+	
     for (t = 0; t < P->ntasks; t++) {
 		if (!strcmp(P->tasks[t].cmd, "exit")) {
 			builtin_execute(P->tasks[t]);
