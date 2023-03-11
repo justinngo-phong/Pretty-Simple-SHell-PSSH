@@ -13,7 +13,7 @@
  * Set to 1 to view the command line parse *
  *******************************************/
 #define DEBUG_PARSE 0
-
+#define MAX_JOBS 100
 
 typedef enum {
 	STOPPED,
@@ -112,9 +112,8 @@ void set_fg_pgrp(pid_t pgrp)
 	tcsetpgrp(STDOUT_FILENO, pgrp);
 	signal(SIGTTOU, sav);
 	
-/*	if (isatty(STDOUT_FILENO))
-		printf("FG Process grp: %d\n", tcgetpgrp(STDOUT_FILENO));
-	printf("Child Prcess grp: %d\n", getpgrp()); */
+	while (tcgetpgrp(STDOUT_FILENO) != getpgrp())
+		pause();	
 }
 
 /* Signal handler */
@@ -123,31 +122,49 @@ void handler(int sig) {
 	int status;
 	
 	if ((sig == SIGTTOU) || (sig == SIGTTIN)) {
-		while (tcgetpgrp(STDOUT_FILENO) != getpgrp()) 
+		//while (tcgetpgrp(STDOUT_FILENO) != getpgrp()) 
+		while (tcgetpgrp(0) != getpgrp()) 
 			pause();
 	} else if (sig == SIGCHLD) {
 		while ((chld = waitpid(-1, &status, WNOHANG|WUNTRACED|WCONTINUED)) > 0) {
 			if (WIFSTOPPED(status)) {
 				set_fg_pgrp(0);
+				
 			} else {
 				set_fg_pgrp(0);
-				printf("Parent: Child %d has terminated\n", chld);
 			}
 		}
 	}
 }
 
-void add_new_job(Job* new_job, Job** jobs) {
+// add new job to job array and return job number
+int add_new_job(Job* new_job, Job** jobs) {
 	int i=0;
 	while (jobs[i] != NULL) {
 		i++;
 	}
 	jobs[i] = new_job;
+	return i;
 }
 
 void delete_job(int job_num, Job** jobs) {
    	jobs[job_num] = NULL;
 }	
+
+void print_jobs(Job **jobs) {
+	int i;
+
+	for (i=0; i<MAX_JOBS; i++) {
+		if (jobs[i] != NULL) {
+			if (jobs[i]->status == STOPPED) {
+				printf("[%d] + stopped\t%s\n", i, jobs[i]->name);
+			} else if (jobs[i]->status == BG || jobs[i]->status == FG) {
+				printf("[%d] + running\t%s\n", i, jobs[i]->name);
+			}
+		}
+	}
+}
+
 	
 /* Called upon receiving a successful parse.
  * This function is responsible for cycling through the
@@ -167,7 +184,7 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 	J->pids = pid;
 	J->npids = P->ntasks;
 
-	add_new_job(J, jobs);
+	int curr_job_num = add_new_job(J, jobs);
 
     for (t = 0; t < P->ntasks; t++) {
 		if (!strcmp(P->tasks[t].cmd, "exit")) {
@@ -175,6 +192,8 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 		} else if (!command_found(P->tasks[t].cmd)) {
 			printf("pssh: command not found: %s\n", P->tasks[t].cmd);
 			break;
+		} else if (!strcmp(P->tasks[t].cmd, "jobs")) {
+		 	print_jobs(jobs);  
 		} else { 
 			// create a new pipe
 			if (pipe(fd) == -1) {
@@ -187,9 +206,9 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 			exit(EXIT_FAILURE);
 		}
 		setpgid(pid[t], pid[0]);
-	J->pgid = pid[0];
-	J->status = FG;
-	set_fg_pgrp(pid[0]);
+		J->pgid = pid[0];
+		J->status = FG;
+		set_fg_pgrp(pid[0]);
 
 
 			if (pid[t] == 0) { /* Child Process */
@@ -275,19 +294,19 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 		
 		}
 	}
-
 	// parent waits for all its child
 	for (t = 0; t < P->ntasks; t++) {
-		while (!kill(pid[t], 0))
-			pause();
+		int status;
+		waitpid(pid[t], &status, WNOHANG);
 	}
+	delete_job(curr_job_num, jobs);
 }
 
 int main (int argc, char** argv)
 {
     char* cmdline;
     Parse* P;
-	Job **jobs = calloc(100, sizeof(Job*));
+	Job **jobs = calloc(MAX_JOBS, sizeof(Job*));
 
 	signal(SIGTTOU, handler);
 	signal(SIGCHLD, handler);
