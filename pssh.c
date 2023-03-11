@@ -141,9 +141,22 @@ void handler(int sig) {
 				set_fg_pgrp(0);
 				curr_job->status = STOPPED;
 				printf("[%d] + suspended\t%s\n", curr_job->job_num, curr_job->name);
-			} else {
+			} else if (WIFEXITED(status)) {
 				set_fg_pgrp(0);
 				terminate_job(curr_job->job_num, jobs);
+			} else {
+				// check to see if child is in foreground first
+				int chld_is_fg = 0;
+				if (getpgrp() == tcgetpgrp(STDOUT_FILENO)) {
+					chld_is_fg = 1;
+				}
+
+				set_fg_pgrp(0);
+				terminate_job(curr_job->job_num, jobs);
+
+				// if child was in background and finished, print the following
+				if (!chld_is_fg)
+					printf("[%d] + done\t%s\n", curr_job->job_num, curr_job->name);
 			}
 		}
 	}
