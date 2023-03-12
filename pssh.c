@@ -110,12 +110,15 @@ static int command_found (const char* cmd)
 void set_fg_pgrp(pid_t pgrp)
 {
 	void (*sav)(int sig);
+
+	printf("pgrp: %d\n", pgrp);
 		
 	if (pgrp == 0)
 		pgrp = getpgrp();
 
 	sav = signal(SIGTTOU, SIG_IGN);
 	tcsetpgrp(STDOUT_FILENO, pgrp);
+				printf("FG Process Group: %d\n", tcgetpgrp(STDOUT_FILENO));
 	signal(SIGTTOU, sav);
 }
 
@@ -138,7 +141,9 @@ void handler(int sig) {
 			if (WIFSTOPPED(status)) {
 				set_fg_pgrp(0);
 				curr_job->status = STOPPED;
-				printf("[%d] + suspended\t%s\n", curr_job->job_num, curr_job->name);
+				printf("[%d] + suspended\t%s, pgid: %d\n", curr_job->job_num, curr_job->name, curr_job->pgid);
+			} else if (WIFCONTINUED(status)) {
+				curr_job->status = FG;
 				/*
 			} else if (WIFEXITED(status)) {
 				// check to see if child is in foreground first
@@ -189,6 +194,37 @@ void print_jobs(Job **jobs) {
 	}
 }
 
+// move job to foreground and continue
+void fg(char *num_str, Job **jobs) {
+	if (num_str == NULL || num_str[0] != '%') {  
+		printf("Usage: fg %%<job number>\n");
+		return;
+	}
+
+	char *job_num_str = num_str + 1;
+	int i;
+	for (i=0; job_num_str[i] != '\0'; i++) {
+		if (!isdigit(job_num_str[i])) {
+			printf("pssh: invalid job number: %s\n", num_str);
+			return;
+		}
+	}
+	int job_num = atoi(job_num_str);
+	if (job_num < 0 || job_num >= 100 || jobs[job_num] == NULL) {
+		printf("pssh: invalid job number: %s\n", num_str);
+		return;
+	}
+
+	printf("job num: %d, pgid: %d\n", job_num, jobs[job_num]->pgid);
+	curr_job = jobs[job_num];
+	set_fg_pgrp(jobs[job_num]->pgid);
+	if (jobs[job_num] == STOPPED) { // if it is stopped, then move to fg and continue
+		kill(-1 * jobs[job_num]->pgid, SIGCONT);
+	} else { // if its running in bg, then just move to fg
+		jobs[job_num]->status = FG;
+	}
+}
+
 	
 /* Called upon receiving a successful parse.
  * This function is responsible for cycling through the
@@ -209,7 +245,7 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 	J->npids = P->ntasks;
 
 	J->status = FG;
-	if (strcmp(P->tasks[0].cmd, "jobs"))
+	if (!is_builtin(P->tasks[0].cmd))
 		add_new_job(J, jobs);
 	
     for (t = 0; t < P->ntasks; t++) {
@@ -220,6 +256,8 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 			break;
 		} else if (!strcmp(P->tasks[0].cmd, "jobs")) {
 			print_jobs(jobs);
+		} else if (!strcmp(P->tasks[0].cmd, "fg")) {
+			fg(P->tasks[0].argv[1], jobs);
 		} else { 
 			// create a new pipe
 			if (pipe(fd) == -1) {
