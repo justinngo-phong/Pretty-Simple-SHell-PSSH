@@ -33,6 +33,7 @@ typedef struct {
 
 // global current job pointer and current job number
 Job *curr_job;
+Job *next_job = NULL;
 Job **jobs;
 
 void print_banner ()
@@ -127,6 +128,7 @@ void terminate_job(int job_num, Job** jobs) {
 void handler(int sig) {
 	pid_t chld;
 	int status;
+	//printf("handler: %x\n", curr_job);
 	
 	if ((sig == SIGTTOU) || (sig == SIGTTIN)) {
 		while (tcgetpgrp(STDOUT_FILENO) != getpgrp()) 
@@ -205,10 +207,10 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 	// create new job
 	J->pids = pid;
 	J->npids = P->ntasks;
-		add_new_job(J, jobs);
 
 	J->status = FG;
-
+	if (strcmp(P->tasks[0].cmd, "jobs"))
+		add_new_job(J, jobs);
 	
     for (t = 0; t < P->ntasks; t++) {
 		if (!strcmp(P->tasks[t].cmd, "exit")) {
@@ -216,6 +218,8 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 		} else if (!command_found(P->tasks[t].cmd)) {
 			printf("pssh: command not found: %s\n", P->tasks[t].cmd);
 			break;
+		} else if (!strcmp(P->tasks[0].cmd, "jobs")) {
+			print_jobs(jobs);
 		} else { 
 			// create a new pipe
 			if (pipe(fd) == -1) {
@@ -321,9 +325,6 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 		int status;
 		waitpid(pid[t], &status, WNOHANG);
 	}
-	if (!strcmp(P->tasks[0].cmd, "jobs")) {
-		print_jobs(jobs);
-	}
 }
 
 int main (int argc, char** argv)
@@ -339,8 +340,10 @@ int main (int argc, char** argv)
     print_banner ();
 
     while (1) {
+		curr_job = next_job;
 		Job* new_job=malloc(sizeof(Job));
-		curr_job = new_job;
+		next_job = new_job;
+		//printf("curr %x 0 %x 1 %x 2 %x\n", curr_job, jobs[0], jobs[1], jobs[2]);
 		char *prompt = build_prompt();
         cmdline = readline (prompt);
 		free(prompt);
