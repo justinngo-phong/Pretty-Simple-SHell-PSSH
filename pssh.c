@@ -111,14 +111,14 @@ void set_fg_pgrp(pid_t pgrp)
 {
 	void (*sav)(int sig);
 
-	printf("pgrp: %d\n", pgrp);
+	//printf("pgrp: %d\n", pgrp);
 		
 	if (pgrp == 0)
 		pgrp = getpgrp();
 
 	sav = signal(SIGTTOU, SIG_IGN);
 	tcsetpgrp(STDOUT_FILENO, pgrp);
-				printf("FG Process Group: %d\n", tcgetpgrp(STDOUT_FILENO));
+				//printf("FG Process Group: %d\n", tcgetpgrp(STDOUT_FILENO));
 	signal(SIGTTOU, sav);
 }
 
@@ -141,7 +141,7 @@ void handler(int sig) {
 			if (WIFSTOPPED(status)) {
 				set_fg_pgrp(0);
 				curr_job->status = STOPPED;
-				printf("[%d] + suspended\t%s, pgid: %d\n", curr_job->job_num, curr_job->name, curr_job->pgid);
+				printf("[%d] + suspended\t%s\n", curr_job->job_num, curr_job->name);
 			} else if (WIFCONTINUED(status)) {
 				curr_job->status = FG;
 				/*
@@ -160,8 +160,10 @@ void handler(int sig) {
 				*/
 			} else {
 				set_fg_pgrp(0);
+				printf("next: %x, curr: %x\n", next_job, curr_job);
+				printf("freeing of curr: %x, job num %d, jobs[%d]: %x\n", curr_job,
+					   	curr_job->job_num, curr_job->job_num, jobs[curr_job->job_num]);
 				terminate_job(curr_job->job_num, jobs);
-
 			}
 		}
 	}
@@ -178,6 +180,8 @@ void add_new_job(Job* new_job, Job** jobs) {
 	}
 	jobs[i] = new_job;
 	jobs[i]->job_num = i;
+	printf("next: %x, next job num: %d, jobs[%d]: %x\n", next_job, next_job->job_num, i, jobs[i]);
+	printf("curr: %x, jobs[%d]: %x\n", curr_job,i, jobs[i]);
 }
 
 void print_jobs(Job **jobs) {
@@ -215,10 +219,11 @@ void fg(char *num_str, Job **jobs) {
 		return;
 	}
 
-	printf("job num: %d, pgid: %d\n", job_num, jobs[job_num]->pgid);
+	//printf("job num: %d, pgid: %d\n", job_num, jobs[job_num]->pgid);
 	curr_job = jobs[job_num];
+	next_job = curr_job;
 	set_fg_pgrp(jobs[job_num]->pgid);
-	if (jobs[job_num] == STOPPED) { // if it is stopped, then move to fg and continue
+	if (jobs[job_num]->status == STOPPED) { // if it is stopped, then move to fg and continue
 		kill(-1 * jobs[job_num]->pgid, SIGCONT);
 	} else { // if its running in bg, then just move to fg
 		jobs[job_num]->status = FG;
@@ -381,6 +386,7 @@ int main (int argc, char** argv)
 		curr_job = next_job;
 		Job* new_job=malloc(sizeof(Job));
 		next_job = new_job;
+		//curr_job = new_job;
 		//printf("curr %x 0 %x 1 %x 2 %x\n", curr_job, jobs[0], jobs[1], jobs[2]);
 		char *prompt = build_prompt();
         cmdline = readline (prompt);
