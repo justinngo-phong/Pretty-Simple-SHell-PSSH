@@ -12,7 +12,7 @@
 /*******************************************
  * Set to 1 to view the command line parse *
  *******************************************/
-#define DEBUG_PARSE 0
+#define DEBUG_PARSE 1
 #define DEBUG_PRINT 1
 #define MAX_JOBS 100
 
@@ -36,6 +36,7 @@ typedef struct {
 Job *curr_job;
 Job *next_job = NULL;
 Job **jobs;
+pid_t pssh_pid;
 
 // debugging function to print all jobs in job array
 void _print_job_array() {
@@ -138,6 +139,7 @@ void set_fg_pgrp(pid_t pgrp)
 }
 
 void terminate_job(int job_num, Job** jobs) {
+	free(jobs[job_num]->name);
 	free(jobs[job_num]);
    	jobs[job_num] = NULL;
 }	
@@ -169,7 +171,7 @@ void handler(int sig) {
 				// printf("next: %x, curr: %x\n", next_job, curr_job);
 				// printf("freeing of curr: %x, job num %d, jobs[%d]: %x\n", curr_job,
 				// 	   	curr_job->job_num, curr_job->job_num, jobs[curr_job->job_num]);
-				_print_job_array();
+				// _print_job_array();
 				if (curr_job->status == BG) { 
 					printf("\n[%d] + done\t\t%s\n", curr_job->job_num, curr_job->name);
 				}
@@ -299,9 +301,6 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
     for (t = 0; t < P->ntasks; t++) {
 		if (!strcmp(P->tasks[t].cmd, "exit")) {
 			builtin_execute(P->tasks[t]);
-		} else if (!command_found(P->tasks[t].cmd)) {
-			printf("pssh: command not found: %s\n", P->tasks[t].cmd);
-			break;
 		} else if (!strcmp(P->tasks[0].cmd, "jobs")) {
 			print_jobs(jobs);
 		} else if (!strcmp(P->tasks[0].cmd, "fg")) {
@@ -312,13 +311,15 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 		} else if (!strcmp(P->tasks[0].cmd, "p")) {
 			_print_job_array();
 #endif
+		} else if (!command_found(P->tasks[t].cmd)) {
+			printf("pssh: command not found: %s\n", P->tasks[t].cmd);
+			break;
 		} else { 
 			// create a new pipe
 			if (pipe(fd) == -1) {
 				printf("pssh: failed to create pipe\n");
 				exit(EXIT_FAILURE);
 			}
-			add_new_job(J, jobs);
 			pid[t] = fork();
 			if (pid[t] == -1) {
 				printf("pssh: failed to fork\n");
@@ -326,15 +327,15 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 			}
 			setpgid(pid[t], pid[0]);
 			J->pgid = pid[0];
+			add_new_job(J, jobs);
 
-			if (J->status == FG)
+			if (J->status == FG) { 
 				set_fg_pgrp(pid[0]);
-			if (J->status == BG) {
+			} else if (J->status == BG) {
+				set_fg_pgrp(pssh_pid);
 				printf("[%d] ", J->job_num);
-				fflush(stdout);
 				for (i=0; i<P->ntasks; i++) {
 					printf("%d ", J->pids[i]);
-				fflush(stdout);
 				}
 				printf("\n");
 			}
@@ -424,8 +425,8 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 	}
 	// parent waits for all its child
 	for (t = 0; t < P->ntasks; t++) {
-		int status;
-		waitpid(pid[t], &status, WNOHANG);
+		// waitpid(pid[t], NULL, 0);
+		waitpid(pid[t], NULL, WNOHANG);
 	}
 }
 
@@ -434,13 +435,13 @@ int main (int argc, char** argv)
 	jobs = calloc(MAX_JOBS, sizeof(Job*));
     char* cmdline;
     Parse* P;
-	int background=0;
 
 	signal(SIGTTOU, handler);
 	signal(SIGCHLD, handler);
 	signal(SIGTTIN, handler);
 
     print_banner ();
+	pssh_pid = getpgrp();
 
     while (1) {
 		curr_job = next_job;
@@ -450,11 +451,6 @@ int main (int argc, char** argv)
 		//printf("curr %x 0 %x 1 %x 2 %x\n", curr_job, jobs[0], jobs[1], jobs[2]);
 		char *prompt = build_prompt();
         cmdline = readline (prompt);
-		if (is_background(cmdline)) {
-			background = 1;
-		} else {
-			background = 0;
-		}
 		free(prompt);
         if (!cmdline)       /* EOF (ex: ctrl-d) */
             exit (EXIT_SUCCESS);
@@ -473,7 +469,7 @@ int main (int argc, char** argv)
         parse_debug (P);
 #endif
 
-        execute_tasks (P, new_job, jobs, background);
+        execute_tasks (P, new_job, jobs, P->background);
     next:
         parse_destroy (&P);
         free(cmdline);
