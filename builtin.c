@@ -9,6 +9,10 @@
 static char* builtin[] = {
     "exit",   /* exits the shell */
     "which",  /* displays full path to command */
+	"fg",	  /* run bg process in fg */
+	"bg",	  /* continue running process in bg */
+	"jobs",	  /* print out all jobs */
+	"kill",	  /* built-in kill signal */
     NULL
 };
 

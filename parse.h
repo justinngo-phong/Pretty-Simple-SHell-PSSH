@@ -19,7 +19,8 @@ typedef struct {
     int invalid_syntax;  /* parse failed */
 } Parse;
 
-
+void trim(char *s);
+int is_background (char* cmdline);
 Parse* parse_cmdline (char* cmdline);
 void parse_destroy (Parse** P);
 void parse_debug (Parse* P);

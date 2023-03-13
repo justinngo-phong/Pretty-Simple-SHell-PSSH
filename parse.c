@@ -40,7 +40,7 @@ typedef struct {
 static char ops[] = {'>', '<', '|', '\0'};
 
 
-static void trim (char* s)
+void trim (char* s)
 {
     size_t start, end;
 
@@ -61,7 +61,7 @@ static void trim (char* s)
 }
 
 
-static int is_background (char* cmdline)
+int is_background (char* cmdline)
 {
     size_t last;
     int ret = 0;

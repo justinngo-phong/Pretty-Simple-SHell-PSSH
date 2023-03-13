@@ -118,7 +118,6 @@ void set_fg_pgrp(pid_t pgrp)
 
 	sav = signal(SIGTTOU, SIG_IGN);
 	tcsetpgrp(STDOUT_FILENO, pgrp);
-				//printf("FG Process Group: %d\n", tcgetpgrp(STDOUT_FILENO));
 	signal(SIGTTOU, sav);
 }
 
@@ -141,9 +140,14 @@ void handler(int sig) {
 			if (WIFSTOPPED(status)) {
 				set_fg_pgrp(0);
 				curr_job->status = STOPPED;
-				printf("[%d] + suspended\t%s\n", curr_job->job_num, curr_job->name);
+				printf("[%d] + suspended\t\t%s\n", curr_job->job_num, curr_job->name);
 			} else if (WIFCONTINUED(status)) {
-				curr_job->status = FG;
+				if (getpgrp() == tcgetpgrp(STDOUT_FILENO)) {
+					curr_job->status = BG;
+					printf("[%d] + continued\t\t%s\n", curr_job->job_num, curr_job->name);
+				} else {
+					curr_job->status = FG;
+				}
 				/*
 			} else if (WIFEXITED(status)) {
 				// check to see if child is in foreground first
@@ -160,9 +164,13 @@ void handler(int sig) {
 				*/
 			} else {
 				set_fg_pgrp(0);
-				printf("next: %x, curr: %x\n", next_job, curr_job);
-				printf("freeing of curr: %x, job num %d, jobs[%d]: %x\n", curr_job,
-					   	curr_job->job_num, curr_job->job_num, jobs[curr_job->job_num]);
+				// printf("next: %x, curr: %x\n", next_job, curr_job);
+				// printf("freeing of curr: %x, job num %d, jobs[%d]: %x\n", curr_job,
+				// 	   	curr_job->job_num, curr_job->job_num, jobs[curr_job->job_num]);
+				if (curr_job->status == BG) { 
+					fflush(stdout);
+					printf("[%d] + done\t\t%s", curr_job->job_num, curr_job->name);
+				}
 				terminate_job(curr_job->job_num, jobs);
 			}
 		}
@@ -174,14 +182,15 @@ void add_new_job(Job* new_job, Job** jobs) {
 	int i=0;
 
 	for (i=0; i<MAX_JOBS; i++) {
-		if (jobs[i] == NULL) {
+		if (jobs[i] == new_job) 
+			return; 
+		if (jobs[i] == NULL) 
 			break;
-		}
 	}
 	jobs[i] = new_job;
 	jobs[i]->job_num = i;
-	printf("next: %x, next job num: %d, jobs[%d]: %x\n", next_job, next_job->job_num, i, jobs[i]);
-	printf("curr: %x, jobs[%d]: %x\n", curr_job,i, jobs[i]);
+	// printf("next: %x, next job num: %d, jobs[%d]: %x\n", next_job, next_job->job_num, i, jobs[i]);
+	// printf("curr: %x, jobs[%d]: %x\n", curr_job,i, jobs[i]);
 }
 
 void print_jobs(Job **jobs) {
@@ -190,9 +199,9 @@ void print_jobs(Job **jobs) {
 	for (i=0; i<MAX_JOBS; i++) {
 		if (jobs[i] != NULL) {
 			if (jobs[i]->status == STOPPED) {
-				printf("[%d] + stopped\t%s\n", i, jobs[i]->name);
+				printf("[%d] + stopped\t\t%s\n", i, jobs[i]->name);
 			} else if (jobs[i]->status == BG || jobs[i]->status == FG) {
-				printf("[%d] + running\t%s\n", i, jobs[i]->name);
+				printf("[%d] + running\t\t%s\n", i, jobs[i]->name);
 			} 
 		}
 	}
@@ -230,28 +239,60 @@ void fg(char *num_str, Job **jobs) {
 	}
 }
 
+// continue job in background
+void bg(char *num_str, Job **jobs) {
+	if (num_str == NULL || num_str[0] != '%') {  
+		printf("Usage: fg %%<job number>\n");
+		return;
+	}
+
+	char *job_num_str = num_str + 1;
+	int i;
+	for (i=0; job_num_str[i] != '\0'; i++) {
+		if (!isdigit(job_num_str[i])) {
+			printf("pssh: invalid job number: %s\n", num_str);
+			return;
+		}
+	}
+	int job_num = atoi(job_num_str);
+	if (job_num < 0 || job_num >= 100 || jobs[job_num] == NULL) {
+		printf("pssh: invalid job number: %s\n", num_str);
+		return;
+	}
+
+	curr_job = jobs[job_num];
+	next_job = curr_job;
+
+	if (jobs[job_num]->status == STOPPED) { // if it is stopped, then move to fg and continue
+		kill(-1 * jobs[job_num]->pgid, SIGCONT);
+	} else { // if its running in bg, then just move to fg
+		jobs[job_num]->status = FG;
+	}
+}
+
 	
 /* Called upon receiving a successful parse.
  * This function is responsible for cycling through the
  * tasks, and forking, executing, etc as necessary to get
  * the job done! */
-void execute_tasks (Parse* P, Job* J, Job** jobs)
+void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 {
     int fd[2];
 	int prev_fd;
     pid_t pid[P->ntasks];
 	int fd_in = STDIN_FILENO;
 	int fd_out = STDOUT_FILENO;
-    unsigned int t;
+    unsigned int t, i;
 
 
 	// create new job
 	J->pids = pid;
 	J->npids = P->ntasks;
-
-	J->status = FG;
-	if (!is_builtin(P->tasks[0].cmd))
-		add_new_job(J, jobs);
+	if (background) {
+		J->status = BG;
+	} else { 
+		J->status = FG;
+	}
 	
     for (t = 0; t < P->ntasks; t++) {
 		if (!strcmp(P->tasks[t].cmd, "exit")) {
@@ -263,12 +304,15 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 			print_jobs(jobs);
 		} else if (!strcmp(P->tasks[0].cmd, "fg")) {
 			fg(P->tasks[0].argv[1], jobs);
+		} else if (!strcmp(P->tasks[0].cmd, "bg")) {
+			bg(P->tasks[0].argv[1], jobs);
 		} else { 
 			// create a new pipe
 			if (pipe(fd) == -1) {
 				printf("pssh: failed to create pipe\n");
 				exit(EXIT_FAILURE);
 			}
+			add_new_job(J, jobs);
 			pid[t] = fork();
 			if (pid[t] == -1) {
 				printf("pssh: failed to fork\n");
@@ -276,9 +320,18 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 			}
 			setpgid(pid[t], pid[0]);
 			J->pgid = pid[0];
+
 			if (J->status == FG)
 				set_fg_pgrp(pid[0]);
-
+			if (J->status == BG) {
+				printf("[%d] ", J->job_num);
+				fflush(stdout);
+				for (i=0; i<P->ntasks; i++) {
+					printf("%d ", J->pids[i]);
+				fflush(stdout);
+				}
+				printf("\n");
+			}
 
 			if (pid[t] == 0) { /* Child Process */
 				// redirect input to input file if there exists one
@@ -375,6 +428,7 @@ int main (int argc, char** argv)
 	jobs = calloc(MAX_JOBS, sizeof(Job*));
     char* cmdline;
     Parse* P;
+	int background=0;
 
 	signal(SIGTTOU, handler);
 	signal(SIGCHLD, handler);
@@ -390,6 +444,11 @@ int main (int argc, char** argv)
 		//printf("curr %x 0 %x 1 %x 2 %x\n", curr_job, jobs[0], jobs[1], jobs[2]);
 		char *prompt = build_prompt();
         cmdline = readline (prompt);
+		if (is_background(cmdline)) {
+			background = 1;
+		} else {
+			background = 0;
+		}
 		free(prompt);
         if (!cmdline)       /* EOF (ex: ctrl-d) */
             exit (EXIT_SUCCESS);
@@ -408,7 +467,7 @@ int main (int argc, char** argv)
         parse_debug (P);
 #endif
 
-        execute_tasks (P, new_job, jobs);
+        execute_tasks (P, new_job, jobs, background);
     next:
         parse_destroy (&P);
         free(cmdline);
