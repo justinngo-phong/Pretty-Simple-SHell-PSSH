@@ -72,5 +72,6 @@ void builtin_execute (Task T)
 	}
     else {
         printf ("pssh: builtin command: %s (not implemented!)\n", T.cmd);
-    }
+		exit (EXIT_SUCCESS); 
+	}
 }

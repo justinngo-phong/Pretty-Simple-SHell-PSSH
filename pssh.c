@@ -13,6 +13,7 @@
  * Set to 1 to view the command line parse *
  *******************************************/
 #define DEBUG_PARSE 0
+#define DEBUG_PRINT 1
 #define MAX_JOBS 100
 
 typedef enum {
@@ -35,6 +36,21 @@ typedef struct {
 Job *curr_job;
 Job *next_job = NULL;
 Job **jobs;
+
+// debugging function to print all jobs in job array
+void _print_job_array() {
+	int i;
+	for (i=0; i<MAX_JOBS; i++) {
+		if (jobs[i] != NULL) {
+			printf("jobs[%d]:\n", i);
+			printf("name = %s\n", jobs[i]->name);
+			printf("npids = %d\n", jobs[i]->npids);
+			printf("pgid = %d\n", jobs[i]->pgid);
+			printf("status = %d\n", jobs[i]->status);
+			printf("\n");
+		}
+	}
+}
 
 void print_banner ()
 {
@@ -148,28 +164,14 @@ void handler(int sig) {
 				} else {
 					curr_job->status = FG;
 				}
-				/*
-			} else if (WIFEXITED(status)) {
-				// check to see if child is in foreground first
-				int chld_is_fg = 0;
-				if (getpgrp() == tcgetpgrp(STDOUT_FILENO)) {
-					chld_is_fg = 1;
-				}
-
-				set_fg_pgrp(0);
-				// if child was in background and finished, print the following
-				if (!chld_is_fg)
-					printf("[%d] + done\t%s\n", curr_job->job_num, curr_job->name);
-				terminate_job(curr_job->job_num, jobs);
-				*/
 			} else {
 				set_fg_pgrp(0);
 				// printf("next: %x, curr: %x\n", next_job, curr_job);
 				// printf("freeing of curr: %x, job num %d, jobs[%d]: %x\n", curr_job,
 				// 	   	curr_job->job_num, curr_job->job_num, jobs[curr_job->job_num]);
+				_print_job_array();
 				if (curr_job->status == BG) { 
-					fflush(stdout);
-					printf("[%d] + done\t\t%s", curr_job->job_num, curr_job->name);
+					printf("\n[%d] + done\t\t%s\n", curr_job->job_num, curr_job->name);
 				}
 				terminate_job(curr_job->job_num, jobs);
 			}
@@ -306,6 +308,10 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 			fg(P->tasks[0].argv[1], jobs);
 		} else if (!strcmp(P->tasks[0].cmd, "bg")) {
 			bg(P->tasks[0].argv[1], jobs);
+#if DEBUG_PRINT
+		} else if (!strcmp(P->tasks[0].cmd, "p")) {
+			_print_job_array();
+#endif
 		} else { 
 			// create a new pipe
 			if (pipe(fd) == -1) {
