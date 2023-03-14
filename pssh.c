@@ -37,6 +37,7 @@ typedef struct {
 Job *curr_job;
 // Job *next_job = NULL;
 Job **jobs;
+pid_t pssh_pid;
 
 // debugging function to print all jobs in job array
 void _print_job_array() {
@@ -139,6 +140,7 @@ void set_fg_pgrp(pid_t pgrp)
 }
 
 void terminate_job(int job_num, Job** jobs) {
+	free(jobs[job_num]->name);
 	free(jobs[job_num]);
    	jobs[job_num] = NULL;
 }	
@@ -156,7 +158,7 @@ void handler(int sig) {
 	pid_t chld;
 	int status;
 	char buf[1024];
-	//printf("handler: %x\n", curr_job);
+	printf("handler: %x\n", curr_job);
 	
 	if ((sig == SIGTTOU) || (sig == SIGTTIN)) {
 		while (tcgetpgrp(STDOUT_FILENO) != getpgrp()) 
@@ -206,6 +208,7 @@ void add_new_job(Job* new_job, Job** jobs) {
 	jobs[i]->job_num = i;
 	// printf("next: %x, next job num: %d, jobs[%d]: %x\n", next_job, next_job->job_num, i, jobs[i]);
 	// printf("curr: %x, jobs[%d]: %x\n", curr_job,i, jobs[i]);
+	printf("add new: %x\n", curr_job);
 }
 
 void print_jobs(Job **jobs) {
@@ -508,6 +511,7 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 
 				if (t==P->ntasks-1) {
 					J->pgid = pid[0];
+			add_new_job(J, jobs);
 
 					if (J->status == FG)
 						set_fg_pgrp(pid[0]);
@@ -532,8 +536,8 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 	/*
 	// parent waits for all its child
 	for (t = 0; t < P->ntasks; t++) {
-		waitpid(pid[t], NULL, 0);
-		//waitpid(pid[t], NULL, WNOHANG);
+		// waitpid(pid[t], NULL, 0);
+		waitpid(pid[t], NULL, WNOHANG);
 	}
 	*/
 }
@@ -549,6 +553,7 @@ int main (int argc, char** argv)
 	signal(SIGTTIN, handler);
 
     print_banner ();
+	pssh_pid = getpgrp();
 
     while (1) {
 		//curr_job = next_job;
