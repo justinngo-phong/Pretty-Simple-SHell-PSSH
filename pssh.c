@@ -299,9 +299,6 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
     for (t = 0; t < P->ntasks; t++) {
 		if (!strcmp(P->tasks[t].cmd, "exit")) {
 			builtin_execute(P->tasks[t]);
-		} else if (!command_found(P->tasks[t].cmd)) {
-			printf("pssh: command not found: %s\n", P->tasks[t].cmd);
-			break;
 		} else if (!strcmp(P->tasks[0].cmd, "jobs")) {
 			print_jobs(jobs);
 		} else if (!strcmp(P->tasks[0].cmd, "fg")) {
@@ -312,6 +309,9 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 		} else if (!strcmp(P->tasks[0].cmd, "p")) {
 			_print_job_array();
 #endif
+		} else if (!command_found(P->tasks[t].cmd)) {
+			printf("pssh: command not found: %s\n", P->tasks[t].cmd);
+			break;
 		} else { 
 			// create a new pipe
 			if (pipe(fd) == -1) {
