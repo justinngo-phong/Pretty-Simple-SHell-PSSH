@@ -422,7 +422,6 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 				printf("pssh: failed to create pipe\n");
 				exit(EXIT_FAILURE);
 			}
-			add_new_job(J, jobs);
 			pid[t] = fork();
 			if (pid[t] == -1) {
 				printf("pssh: failed to fork\n");
@@ -503,6 +502,9 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 				if (t > 0) {
 					close(prev_fd);
 				}
+
+				if (t == 0) 
+					add_new_job(J, jobs);
 
 				if (t==P->ntasks-1) {
 					J->pgid = pid[0];
