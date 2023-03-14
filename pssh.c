@@ -158,7 +158,7 @@ void handler(int sig) {
 	pid_t chld;
 	int status;
 	char buf[1024];
-	//printf("handler: %x\n", curr_job);
+	printf("handler: %x\n", curr_job);
 	
 	if ((sig == SIGTTOU) || (sig == SIGTTIN)) {
 		while (tcgetpgrp(STDOUT_FILENO) != getpgrp()) 
@@ -208,6 +208,7 @@ void add_new_job(Job* new_job, Job** jobs) {
 	jobs[i]->job_num = i;
 	// printf("next: %x, next job num: %d, jobs[%d]: %x\n", next_job, next_job->job_num, i, jobs[i]);
 	// printf("curr: %x, jobs[%d]: %x\n", curr_job,i, jobs[i]);
+	printf("add new: %x\n", curr_job);
 }
 
 void print_jobs(Job **jobs) {
@@ -507,6 +508,7 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 
 				if (t==P->ntasks-1) {
 					J->pgid = pid[0];
+			add_new_job(J, jobs);
 
 					if (J->status == FG)
 						set_fg_pgrp(pid[0]);
