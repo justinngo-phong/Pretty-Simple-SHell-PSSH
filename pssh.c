@@ -37,6 +37,7 @@ typedef struct {
 Job *curr_job;
 // Job *next_job = NULL;
 Job **jobs;
+pid_t pssh_pid;
 
 // debugging function to print all jobs in job array
 void _print_job_array() {
@@ -139,6 +140,7 @@ void set_fg_pgrp(pid_t pgrp)
 }
 
 void terminate_job(int job_num, Job** jobs) {
+	free(jobs[job_num]->name);
 	free(jobs[job_num]);
    	jobs[job_num] = NULL;
 }	
@@ -422,7 +424,6 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 				printf("pssh: failed to create pipe\n");
 				exit(EXIT_FAILURE);
 			}
-			add_new_job(J, jobs);
 			pid[t] = fork();
 			if (pid[t] == -1) {
 				printf("pssh: failed to fork\n");
@@ -530,8 +531,8 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 	/*
 	// parent waits for all its child
 	for (t = 0; t < P->ntasks; t++) {
-		waitpid(pid[t], NULL, 0);
-		//waitpid(pid[t], NULL, WNOHANG);
+		// waitpid(pid[t], NULL, 0);
+		waitpid(pid[t], NULL, WNOHANG);
 	}
 	*/
 }
@@ -547,6 +548,7 @@ int main (int argc, char** argv)
 	signal(SIGTTIN, handler);
 
     print_banner ();
+	pssh_pid = getpgrp();
 
     while (1) {
 		//curr_job = next_job;
