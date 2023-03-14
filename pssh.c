@@ -13,7 +13,7 @@
 /*******************************************
  * Set to 1 to view the command line parse *
  *******************************************/
-#define DEBUG_PARSE 0
+#define DEBUG_PARSE 1
 #define DEBUG_PRINT 1
 #define MAX_JOBS 100
 
@@ -35,7 +35,7 @@ typedef struct {
 
 // global current job pointer and current job number
 Job *curr_job;
-Job *next_job = NULL;
+// Job *next_job = NULL;
 Job **jobs;
 
 // debugging function to print all jobs in job array
@@ -143,10 +143,19 @@ void terminate_job(int job_num, Job** jobs) {
    	jobs[job_num] = NULL;
 }	
 
+// safely switch between foreground process groups to print
+void safe_print (char *str) {
+	pid_t curr_fg = tcgetpgrp(STDOUT_FILENO);
+	set_fg_pgrp(getpgrp());
+	printf("%s", str);
+	set_fg_pgrp(curr_fg);
+}
+
 /* Signal handler */
 void handler(int sig) {
 	pid_t chld;
 	int status;
+	char buf[1024];
 	//printf("handler: %x\n", curr_job);
 	
 	if ((sig == SIGTTOU) || (sig == SIGTTIN)) {
@@ -157,7 +166,8 @@ void handler(int sig) {
 			if (WIFSTOPPED(status)) {
 				set_fg_pgrp(0);
 				curr_job->status = STOPPED;
-				printf("[%d] + suspended\t\t%s\n", curr_job->job_num, curr_job->name);
+				sprintf(buf, "[%d] + suspended\t\t%s\n", curr_job->job_num, curr_job->name);
+				safe_print(buf);
 			} else if (WIFCONTINUED(status)) {
 				if (getpgrp() == tcgetpgrp(STDOUT_FILENO)) {
 					curr_job->status = BG;
@@ -170,9 +180,10 @@ void handler(int sig) {
 				// printf("next: %x, curr: %x\n", next_job, curr_job);
 				// printf("freeing of curr: %x, job num %d, jobs[%d]: %x\n", curr_job,
 				// 	   	curr_job->job_num, curr_job->job_num, jobs[curr_job->job_num]);
-				_print_job_array();
+				// _print_job_array();
 				if (curr_job->status == BG) { 
-					printf("\n[%d] + done\t\t%s\n", curr_job->job_num, curr_job->name);
+					sprintf(buf, "\n[%d] + done\t\t%s\n", curr_job->job_num, curr_job->name);
+					safe_print(buf);
 				}
 				terminate_job(curr_job->job_num, jobs);
 			}
@@ -184,6 +195,7 @@ void handler(int sig) {
 void add_new_job(Job* new_job, Job** jobs) {
 	int i=0;
 
+	curr_job = new_job;
 	for (i=0; i<MAX_JOBS; i++) {
 		if (jobs[i] == new_job) 
 			return; 
@@ -233,7 +245,7 @@ void fg(char *num_str, Job **jobs) {
 
 	//printf("job num: %d, pgid: %d\n", job_num, jobs[job_num]->pgid);
 	curr_job = jobs[job_num];
-	next_job = curr_job;
+	// next_job = curr_job;
 	set_fg_pgrp(jobs[job_num]->pgid);
 	if (jobs[job_num]->status == STOPPED) { // if it is stopped, then move to fg and continue
 		kill(-1 * jobs[job_num]->pgid, SIGCONT);
@@ -264,7 +276,7 @@ void bg(char *num_str, Job **jobs) {
 	}
 
 	curr_job = jobs[job_num];
-	next_job = curr_job;
+	// next_job = curr_job;
 
 	if (jobs[job_num]->status == STOPPED) { // if it is stopped, then move to fg and continue
 		kill(-1 * jobs[job_num]->pgid, SIGCONT);
@@ -441,7 +453,7 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 				// note: this process is only ran for the last task
 				// 		or if there is only one task
 				if ((t == P->ntasks-1) && (P->outfile)) {
-					fd_out = open(P->outfile, O_WRONLY|O_CREAT|O_TRUNC, 0664);
+					fd_out = open(P->outfile, O_WRONLY|O_CREAT|O_TRUNC, 0600);
 					if (fd_out == -1) {
 						printf("pssh: failed to open output file\n");
 						exit(EXIT_FAILURE);
@@ -492,7 +504,7 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 					close(prev_fd);
 				}
 
-				if (t==0) {
+				if (t==P->ntasks-1) {
 					J->pgid = pid[0];
 
 					if (J->status == FG)
@@ -529,7 +541,6 @@ int main (int argc, char** argv)
 	jobs = calloc(MAX_JOBS, sizeof(Job*));
     char* cmdline;
     Parse* P;
-	int background=0;
 
 	signal(SIGTTOU, handler);
 	signal(SIGCHLD, handler);
@@ -538,18 +549,13 @@ int main (int argc, char** argv)
     print_banner ();
 
     while (1) {
-		curr_job = next_job;
+		//curr_job = next_job;
 		Job* new_job=malloc(sizeof(Job));
-		next_job = new_job;
+		//next_job = new_job;
 		//curr_job = new_job;
 		//printf("curr %x 0 %x 1 %x 2 %x\n", curr_job, jobs[0], jobs[1], jobs[2]);
 		char *prompt = build_prompt();
         cmdline = readline (prompt);
-		if (is_background(cmdline)) {
-			background = 1;
-		} else {
-			background = 0;
-		}
 		free(prompt);
         if (!cmdline)       /* EOF (ex: ctrl-d) */
             exit (EXIT_SUCCESS);
@@ -568,7 +574,7 @@ int main (int argc, char** argv)
         parse_debug (P);
 #endif
 
-        execute_tasks (P, new_job, jobs, background);
+        execute_tasks (P, new_job, jobs, P->background);
     next:
         parse_destroy (&P);
         free(cmdline);
