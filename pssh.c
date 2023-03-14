@@ -37,7 +37,6 @@ typedef struct {
 Job *curr_job;
 // Job *next_job = NULL;
 Job **jobs;
-pid_t pssh_pid;
 
 // debugging function to print all jobs in job array
 void _print_job_array() {
@@ -140,7 +139,6 @@ void set_fg_pgrp(pid_t pgrp)
 }
 
 void terminate_job(int job_num, Job** jobs) {
-	free(jobs[job_num]->name);
 	free(jobs[job_num]);
    	jobs[job_num] = NULL;
 }	
@@ -511,7 +509,6 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 
 				if (t==P->ntasks-1) {
 					J->pgid = pid[0];
-			add_new_job(J, jobs);
 
 					if (J->status == FG)
 						set_fg_pgrp(pid[0]);
@@ -553,7 +550,6 @@ int main (int argc, char** argv)
 	signal(SIGTTIN, handler);
 
     print_banner ();
-	pssh_pid = getpgrp();
 
     while (1) {
 		//curr_job = next_job;
