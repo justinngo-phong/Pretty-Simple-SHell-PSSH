@@ -424,8 +424,8 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 	}
 	// parent waits for all its child
 	for (t = 0; t < P->ntasks; t++) {
-		int status;
-		waitpid(pid[t], &status, WNOHANG);
+		waitpid(pid[t], NULL, 0);
+		//waitpid(pid[t], NULL, WNOHANG);
 	}
 }
 
