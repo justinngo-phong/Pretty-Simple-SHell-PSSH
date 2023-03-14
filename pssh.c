@@ -5,6 +5,7 @@
 #include <readline/readline.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #include "builtin.h"
 #include "parse.h"
@@ -272,6 +273,97 @@ void bg(char *num_str, Job **jobs) {
 	}
 }
 
+
+const char *sigabbrev(unsigned int sig)
+{
+	const char *sigs[31] = { "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", 
+		"BUS", "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM",
+		"TERM", "STKFLT", "CHLD", "CONT", "STOP", "TSTP", "TTIN",
+		"TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO",
+		"PWR", "SYS" };
+	if (sig > 31)
+		return NULL;
+	return sigs[sig-1];
+}
+
+void signals_list() {
+	int i;
+	for (i=1; i<=31; i++) {
+		printf("%2d) SIG%s\t%s\n", i, sigabbrev(i), strsignal(i));
+	}
+}
+
+void usage() {
+	printf("Usage: ./signal [options] <pid>\n");
+	printf("\n");
+	printf("Options:\n");
+	printf("\t-s <signal>\tSends <signal> to <pid>\n");
+	printf("\t-l\t\tLists all signal numbers with their names\n");
+}
+
+int kill_cmd(int argc, char *argv[]) {
+	int opt;
+	int sig = SIGTERM;
+	int pid;
+
+	if (argc == 1) {
+		usage();
+		return 1;
+	}
+	
+	// get the options
+	while ((opt = getopt(argc, argv, "ls:")) != -1) {
+		switch (opt) {
+			case 's':
+				// get the signal number
+				sig = atoi(optarg);
+				break;
+			case 'l':
+				signals_list();
+				return 0;
+			default:
+				usage();
+				return 1;
+		}
+	}	
+
+	// if optind (option index from the getopt function) is greater than the argument count then printout the usage
+	if (argc <= optind) {
+		usage();
+		return 1;
+	}
+
+	// get pid which is at index optind of the argument list
+	pid = atoi(argv[optind]);
+
+	// send the signal to pid with the kill function
+	int signal_sent = kill(pid, sig);
+
+	// if the return value of kill is -1 then there are errors
+	if (signal_sent == -1) {
+		switch (errno) {
+			case EINVAL:
+				printf("%d is an invalid signal\n", sig);
+				return 1;
+			case EPERM:
+				printf("PID %d exists, but we can't send it signals\n", pid);
+				return 1;
+			case ESRCH:
+				printf("PID %d does not exist\n", pid);
+				return 1;
+			default:
+				printf("Cannot send signal %d to PID %d\n", sig, pid);
+				return 1;
+		}
+	}
+
+	// if signal number is 0 and there is no err, then PID exists and can receive signals
+	if ((sig == 0) && (signal_sent != -1)) {
+		printf("PID %d exists and is able to receive signals\n", pid);
+	}
+
+	return 0;
+}
 	
 /* Called upon receiving a successful parse.
  * This function is responsible for cycling through the
@@ -325,19 +417,6 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 				exit(EXIT_FAILURE);
 			}
 			setpgid(pid[t], pid[0]);
-			J->pgid = pid[0];
-
-			if (J->status == FG)
-				set_fg_pgrp(pid[0]);
-			if (J->status == BG) {
-				printf("[%d] ", J->job_num);
-				fflush(stdout);
-				for (i=0; i<P->ntasks; i++) {
-					printf("%d ", J->pids[i]);
-				fflush(stdout);
-				}
-				printf("\n");
-			}
 
 			if (pid[t] == 0) { /* Child Process */
 				// redirect input to input file if there exists one
@@ -413,6 +492,20 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 					close(prev_fd);
 				}
 
+				if (t==0) {
+					J->pgid = pid[0];
+
+					if (J->status == FG)
+						set_fg_pgrp(pid[0]);
+					if (J->status == BG) {
+						printf("[%d] ", J->job_num);
+						for (i=0; i<P->ntasks; i++) {
+							printf("%d ", J->pids[i]);
+						}
+						printf("\n");
+					}
+				}
+				 
 				prev_fd = fd[0];
 				close(fd[1]);
 				if (t  == P->ntasks-1) {
@@ -422,11 +515,13 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 		
 		}
 	}
+	/*
 	// parent waits for all its child
 	for (t = 0; t < P->ntasks; t++) {
 		waitpid(pid[t], NULL, 0);
 		//waitpid(pid[t], NULL, WNOHANG);
 	}
+	*/
 }
 
 int main (int argc, char** argv)
