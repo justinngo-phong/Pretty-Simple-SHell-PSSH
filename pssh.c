@@ -165,8 +165,10 @@ void remove_pid_from_curr(pid_t pid) {
 }
 
 void terminate_job() {
+	free(curr_job->name);
 	free(jobs[curr_job->job_num]);
-   	jobs[curr_job->job_num] = NULL;
+	jobs[curr_job->job_num] = NULL;
+	curr_job = NULL;
 }	
 
 int get_curr_job(pid_t pid) {
@@ -175,7 +177,6 @@ int get_curr_job(pid_t pid) {
 	for (i=0; i<MAX_JOBS; i++) {
 		if (jobs[i]) { 
 			for (j=0; j<jobs[i]->npids; j++) {
-				//printf("%d\n", jobs[i]->pids[j]);
 				if (jobs[i]->pids[j] == pid) {
 					curr_job = jobs[i];
 					return 1;
@@ -218,15 +219,16 @@ void handler(int sig) {
 				}
 			} else {
 				remove_pid_from_curr(chld);
+				if (job_done()) {
+					set_fg_pgrp(pssh_id);
+					if (curr_job->status == BG) {
+						printf("\n[%d] + done\t\t%s\n", curr_job->job_num, curr_job->name);
+					}
+					fflush(stdout);
+					terminate_job();
+				}
 			}
 
-			if (job_done()) {
-				set_fg_pgrp(pssh_id);
-				if (curr_job->status == BG) {
-					printf("\n[%d] + done\t\t%s\n", curr_job->job_num, curr_job->name);
-				}
-				terminate_job();
-			}
 		}
 	}
 }
@@ -244,6 +246,7 @@ void add_new_job(Job* new_job) {
 	}
 	jobs[i] = new_job;
 	jobs[i]->job_num = i;
+	new_job = NULL;
 }
 
 void print_jobs() {
@@ -283,10 +286,10 @@ void fg(char *num_str) {
 
 	curr_job = jobs[job_num];
 	set_fg_pgrp(jobs[job_num]->pgid);
-	if (jobs[job_num]->status == STOPPED) { // if it is stopped, then move to fg and continue
-		kill(-1 * jobs[job_num]->pgid, SIGCONT);
+	if (curr_job->status == STOPPED) { // if it is stopped, then move to fg and continue
+		kill(-1 * curr_job->pgid, SIGCONT);
 	} else { // if its running in bg, then just move to fg
-		jobs[job_num]->status = FG;
+		curr_job->status = FG;
 	}
 }
 
@@ -426,7 +429,6 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 	int fd_out = STDOUT_FILENO;
     unsigned int t, i;
 
-
 	if (!strcmp(P->tasks[0].cmd, "exit")) {
 		builtin_execute(P->tasks[0]);
 		return;
@@ -448,6 +450,7 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 	// create new job
 	J->pids = pid;
 	J->npids = P->ntasks;
+
 	
     for (t = 0; t < P->ntasks; t++) {
 		if (!command_found(P->tasks[t].cmd)) {
@@ -526,6 +529,7 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 			} else { /* Parent Process */
 				// if the parent process is not the initial process
 				// then close the the previous file descriptor
+				printf("%d\n", J->pids[t]);
 				if (t > 0) {
 					close(prev_fd);
 				}
