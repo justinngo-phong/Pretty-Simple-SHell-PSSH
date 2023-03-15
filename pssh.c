@@ -13,7 +13,7 @@
 /*******************************************
  * Set to 1 to view the command line parse *
  *******************************************/
-#define DEBUG_PARSE 1
+#define DEBUG_PARSE 0
 #define DEBUG_PRINT 1
 #define MAX_JOBS 100
 
@@ -38,20 +38,25 @@ Job *curr_job;
 // Job *next_job = NULL;
 Job **jobs;
 
+#if DEBUG_PRINT
 // debugging function to print all jobs in job array
 void _print_job_array() {
-	int i;
+	int i, j;
 	for (i=0; i<MAX_JOBS; i++) {
 		if (jobs[i] != NULL) {
 			printf("jobs[%d]:\n", i);
 			printf("name = %s\n", jobs[i]->name);
 			printf("npids = %d\n", jobs[i]->npids);
+			printf("pids = \n");
+			for (j=0; j<jobs[i]->npids; j++)
+				printf("\t%d\n", jobs[i]->pids[j]);
 			printf("pgid = %d\n", jobs[i]->pgid);
 			printf("status = %d\n", jobs[i]->status);
 			printf("\n");
 		}
 	}
 }
+#endif
 
 void print_banner ()
 {
@@ -128,8 +133,6 @@ void set_fg_pgrp(pid_t pgrp)
 {
 	void (*sav)(int sig);
 
-	//printf("pgrp: %d\n", pgrp);
-		
 	if (pgrp == 0)
 		pgrp = getpgrp();
 
@@ -138,25 +141,38 @@ void set_fg_pgrp(pid_t pgrp)
 	signal(SIGTTOU, sav);
 }
 
-void terminate_job(int job_num, Job** jobs) {
+void remove_pid(int job_num, pid_t pid) {
+	int i;
+	for (i=0; i<jobs[job_num]->npids; i++) {
+		if (jobs[job_num]->pids[i] == pid) {
+			jobs[job_num]->pids[i] = 0;
+			return;
+		}
+	}
+}
+
+int job_finished(int job_num) {
+	int i;
+	for (i=0; i<jobs[job_num]->npids; i++) {
+		if (jobs[job_num]->pids[i] !=0) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+
+void terminate_job(int job_num) {
+	free(jobs[job_num]->name);
+	free(jobs[job_num]->pids);
 	free(jobs[job_num]);
    	jobs[job_num] = NULL;
 }	
-
-// safely switch between foreground process groups to print
-void safe_print (char *str) {
-	pid_t curr_fg = tcgetpgrp(STDOUT_FILENO);
-	set_fg_pgrp(getpgrp());
-	printf("%s", str);
-	set_fg_pgrp(curr_fg);
-}
 
 /* Signal handler */
 void handler(int sig) {
 	pid_t chld;
 	int status;
-	char buf[1024];
-	printf("handler: %x\n", curr_job);
 	
 	if ((sig == SIGTTOU) || (sig == SIGTTIN)) {
 		while (tcgetpgrp(STDOUT_FILENO) != getpgrp()) 
@@ -166,33 +182,30 @@ void handler(int sig) {
 			if (WIFSTOPPED(status)) {
 				set_fg_pgrp(0);
 				curr_job->status = STOPPED;
-				sprintf(buf, "[%d] + suspended\t\t%s\n", curr_job->job_num, curr_job->name);
-				safe_print(buf);
+				printf("\n[%d] + suspended\t\t%s\n", curr_job->job_num, curr_job->name);
 			} else if (WIFCONTINUED(status)) {
 				if (getpgrp() == tcgetpgrp(STDOUT_FILENO)) {
 					curr_job->status = BG;
-					printf("[%d] + continued\t\t%s\n", curr_job->job_num, curr_job->name);
+					printf("\n[%d] + continued\t\t%s\n", curr_job->job_num, curr_job->name);
 				} else {
 					curr_job->status = FG;
 				}
 			} else {
-				set_fg_pgrp(0);
-				// printf("next: %x, curr: %x\n", next_job, curr_job);
-				// printf("freeing of curr: %x, job num %d, jobs[%d]: %x\n", curr_job,
-				// 	   	curr_job->job_num, curr_job->job_num, jobs[curr_job->job_num]);
-				// _print_job_array();
-				if (curr_job->status == BG) { 
-					sprintf(buf, "\n[%d] + done\t\t%s\n", curr_job->job_num, curr_job->name);
-					safe_print(buf);
+				remove_pid(curr_job->job_num, chld);
+				if (job_finished(curr_job->job_num)) { 
+					set_fg_pgrp(0);
+					if (curr_job->status == BG) { 
+						printf("\n[%d] + done\t\t%s\n", curr_job->job_num, curr_job->name);
+					}
+					terminate_job(curr_job->job_num);
 				}
-				terminate_job(curr_job->job_num, jobs);
 			}
 		}
 	}
 }
 
 // add new job to job array and return job number
-void add_new_job(Job* new_job, Job** jobs) {
+void add_new_job(Job* new_job) {
 	int i=0;
 
 	curr_job = new_job;
@@ -204,12 +217,9 @@ void add_new_job(Job* new_job, Job** jobs) {
 	}
 	jobs[i] = new_job;
 	jobs[i]->job_num = i;
-	// printf("next: %x, next job num: %d, jobs[%d]: %x\n", next_job, next_job->job_num, i, jobs[i]);
-	// printf("curr: %x, jobs[%d]: %x\n", curr_job,i, jobs[i]);
-	printf("add new: %x\n", curr_job);
 }
 
-void print_jobs(Job **jobs) {
+void print_jobs() {
 	int i;
 
 	for (i=0; i<MAX_JOBS; i++) {
@@ -224,7 +234,7 @@ void print_jobs(Job **jobs) {
 }
 
 // move job to foreground and continue
-void fg(char *num_str, Job **jobs) {
+void fg(char *num_str) {
 	if (num_str == NULL || num_str[0] != '%') {  
 		printf("Usage: fg %%<job number>\n");
 		return;
@@ -244,9 +254,7 @@ void fg(char *num_str, Job **jobs) {
 		return;
 	}
 
-	//printf("job num: %d, pgid: %d\n", job_num, jobs[job_num]->pgid);
 	curr_job = jobs[job_num];
-	// next_job = curr_job;
 	set_fg_pgrp(jobs[job_num]->pgid);
 	if (jobs[job_num]->status == STOPPED) { // if it is stopped, then move to fg and continue
 		kill(-1 * jobs[job_num]->pgid, SIGCONT);
@@ -256,7 +264,7 @@ void fg(char *num_str, Job **jobs) {
 }
 
 // continue job in background
-void bg(char *num_str, Job **jobs) {
+void bg(char *num_str) {
 	if (num_str == NULL || num_str[0] != '%') {  
 		printf("Usage: fg %%<job number>\n");
 		return;
@@ -277,8 +285,6 @@ void bg(char *num_str, Job **jobs) {
 	}
 
 	curr_job = jobs[job_num];
-	// next_job = curr_job;
-
 	if (jobs[job_num]->status == STOPPED) { // if it is stopped, then move to fg and continue
 		kill(-1 * jobs[job_num]->pgid, SIGCONT);
 	} else { // if its running in bg, then just move to fg
@@ -382,41 +388,43 @@ int kill_cmd(int argc, char *argv[]) {
  * This function is responsible for cycling through the
  * tasks, and forking, executing, etc as necessary to get
  * the job done! */
-void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
+void execute_tasks (Parse* P, Job* J)
 {
     int fd[2];
 	int prev_fd;
-    pid_t pid[P->ntasks];
+    pid_t *pid = malloc(sizeof(pid_t) * P->ntasks);
 	int fd_in = STDIN_FILENO;
 	int fd_out = STDOUT_FILENO;
     unsigned int t, i;
 
 
+	if (!strcmp(P->tasks[0].cmd, "exit")) {
+		builtin_execute(P->tasks[0]);
+		return;
+	} else if (!strcmp(P->tasks[0].cmd, "jobs")) {
+		print_jobs();
+		return;
+	} else if (!strcmp(P->tasks[0].cmd, "fg")) {
+		fg(P->tasks[0].argv[1]);
+		return;
+	} else if (!strcmp(P->tasks[0].cmd, "bg")) {
+		bg(P->tasks[0].argv[1]);
+		return;
+#if DEBUG_PRINT
+	} else if (!strcmp(P->tasks[0].cmd, "p")) {
+		_print_job_array();
+		return;
+#endif
+	}
+
 	// create new job
 	J->pids = pid;
 	J->npids = P->ntasks;
-	if (background) {
-		J->status = BG;
-	} else { 
-		J->status = FG;
-	}
 	
     for (t = 0; t < P->ntasks; t++) {
-		if (!strcmp(P->tasks[t].cmd, "exit")) {
-			builtin_execute(P->tasks[t]);
-		} else if (!strcmp(P->tasks[0].cmd, "jobs")) {
-			print_jobs(jobs);
-		} else if (!strcmp(P->tasks[0].cmd, "fg")) {
-			fg(P->tasks[0].argv[1], jobs);
-		} else if (!strcmp(P->tasks[0].cmd, "bg")) {
-			bg(P->tasks[0].argv[1], jobs);
-#if DEBUG_PRINT
-		} else if (!strcmp(P->tasks[0].cmd, "p")) {
-			_print_job_array();
-#endif
-		} else if (!command_found(P->tasks[t].cmd)) {
+		if (!command_found(P->tasks[t].cmd)) {
 			printf("pssh: command not found: %s\n", P->tasks[t].cmd);
-			break;
+			return;
 		} else { 
 			// create a new pipe
 			if (pipe(fd) == -1) {
@@ -504,22 +512,6 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 					close(prev_fd);
 				}
 
-				if (t == 0) 
-					add_new_job(J, jobs);
-
-				if (t==P->ntasks-1) {
-					J->pgid = pid[0];
-
-					if (J->status == FG)
-						set_fg_pgrp(pid[0]);
-					if (J->status == BG) {
-						printf("[%d] ", J->job_num);
-						for (i=0; i<P->ntasks; i++) {
-							printf("%d ", J->pids[i]);
-						}
-						printf("\n");
-					}
-				}
 				 
 				prev_fd = fd[0];
 				close(fd[1]);
@@ -530,13 +522,22 @@ void execute_tasks (Parse* P, Job* J, Job** jobs, int background)
 		
 		}
 	}
-	/*
-	// parent waits for all its child
-	for (t = 0; t < P->ntasks; t++) {
-		// waitpid(pid[t], NULL, 0);
-		waitpid(pid[t], NULL, WNOHANG);
+
+	J->pgid = pid[0];
+
+	if (!P->background) { 
+		J->status = FG;
+		set_fg_pgrp(pid[0]);
+	} else {
+		J->status = BG;
+		printf("[%d] ", J->job_num);
+		for (i=0; i<P->ntasks; i++) {
+			printf("%d ", J->pids[i]);
+		}
+		printf("\n");
 	}
-	*/
+	
+	add_new_job(J);
 }
 
 int main (int argc, char** argv)
@@ -552,11 +553,7 @@ int main (int argc, char** argv)
     print_banner ();
 
     while (1) {
-		//curr_job = next_job;
 		Job* new_job=malloc(sizeof(Job));
-		//next_job = new_job;
-		//curr_job = new_job;
-		//printf("curr %x 0 %x 1 %x 2 %x\n", curr_job, jobs[0], jobs[1], jobs[2]);
 		char *prompt = build_prompt();
         cmdline = readline (prompt);
 		free(prompt);
@@ -577,7 +574,7 @@ int main (int argc, char** argv)
         parse_debug (P);
 #endif
 
-        execute_tasks (P, new_job, jobs, P->background);
+        execute_tasks (P, new_job);
     next:
         parse_destroy (&P);
         free(cmdline);
