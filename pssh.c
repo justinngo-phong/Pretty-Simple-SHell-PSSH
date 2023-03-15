@@ -38,6 +38,7 @@ Job *curr_job;
 Job **jobs;
 pid_t pssh_id;
 
+#if DEBUG_PRINT
 // debugging function to print all jobs in job array
 void _print_job_array() {
 	int i, j;
@@ -47,7 +48,7 @@ void _print_job_array() {
 			printf("name = %s\n", jobs[i]->name);
 			printf("npids = %d\n", jobs[i]->npids);
 			printf("pids = \n");
-			for (j=0; j<jobs[i]->npids; j++) 
+			for (j=0; j<jobs[i]->npids; j++)
 				printf("\t%d\n", jobs[i]->pids[j]);
 			printf("pgid = %d\n", jobs[i]->pgid);
 			printf("status = %d\n", jobs[i]->status);
@@ -55,6 +56,7 @@ void _print_job_array() {
 		}
 	}
 }
+#endif
 
 void print_banner ()
 {
@@ -131,8 +133,6 @@ void set_fg_pgrp(pid_t pgrp)
 {
 	void (*sav)(int sig);
 
-	//printf("pgrp: %d\n", pgrp);
-		
 	if (pgrp == 0)
 		pgrp = getpgrp();
 
@@ -141,52 +141,33 @@ void set_fg_pgrp(pid_t pgrp)
 	signal(SIGTTOU, sav);
 }
 
-int job_done() {
+void remove_pid(int job_num, pid_t pid) {
 	int i;
-
-	for (i=0; i<curr_job->npids; i++) {
-		if (curr_job->pids[i] != 0) {
-			return 0;
-		}
-	}
-
-	return 1;
-}
-
-void remove_pid_from_curr(pid_t pid) {
-	int i;
-
-	for (i=0; i<curr_job->npids; i++) {
-		if (curr_job->pids[i] == pid) {
-			curr_job->pids[i] = 0;
+	for (i=0; i<jobs[job_num]->npids; i++) {
+		if (jobs[job_num]->pids[i] == pid) {
+			jobs[job_num]->pids[i] = 0;
 			return;
 		}
 	}
 }
 
-void terminate_job() {
-	free(curr_job->name);
-	free(jobs[curr_job->job_num]);
-	jobs[curr_job->job_num] = NULL;
-	curr_job = NULL;
-}	
-
-int get_curr_job(pid_t pid) {
-	int i, j;
-
-	for (i=0; i<MAX_JOBS; i++) {
-		if (jobs[i]) { 
-			for (j=0; j<jobs[i]->npids; j++) {
-				if (jobs[i]->pids[j] == pid) {
-					curr_job = jobs[i];
-					return 1;
-				}
-			}
+int job_finished(int job_num) {
+	int i;
+	for (i=0; i<jobs[job_num]->npids; i++) {
+		if (jobs[job_num]->pids[i] !=0) {
+			return 0;
 		}
 	}
-
-	return 0;
+	return 1;
 }
+
+
+void terminate_job(int job_num) {
+	free(jobs[job_num]->name);
+	free(jobs[job_num]->pids);
+	free(jobs[job_num]);
+   	jobs[job_num] = NULL;
+}	
 
 /* Signal handler */
 void handler(int sig) {
@@ -198,14 +179,6 @@ void handler(int sig) {
 			pause();
 	} else if (sig == SIGCHLD) {
 		while ((chld = waitpid(-1, &status, WNOHANG|WUNTRACED|WCONTINUED)) > 0) {
-			if (!get_curr_job(chld)) {
-				set_fg_pgrp(pssh_id);
-				if (curr_job->status == BG) {
-					printf("\n[%d] + done\t\t%s\n", curr_job->job_num, curr_job->name);
-				}
-				terminate_job();
-				break;
-			}
 			if (WIFSTOPPED(status)) {
 				set_fg_pgrp(0);
 				curr_job->status = STOPPED;
@@ -218,14 +191,13 @@ void handler(int sig) {
 					curr_job->status = FG;
 				}
 			} else {
-				remove_pid_from_curr(chld);
-				if (job_done()) {
-					set_fg_pgrp(pssh_id);
-					if (curr_job->status == BG) {
+				remove_pid(curr_job->job_num, chld);
+				if (job_finished(curr_job->job_num)) { 
+					set_fg_pgrp(0);
+					if (curr_job->status == BG) { 
 						printf("\n[%d] + done\t\t%s\n", curr_job->job_num, curr_job->name);
 					}
-					fflush(stdout);
-					terminate_job();
+					terminate_job(curr_job->job_num);
 				}
 			}
 
@@ -246,7 +218,6 @@ void add_new_job(Job* new_job) {
 	}
 	jobs[i] = new_job;
 	jobs[i]->job_num = i;
-	new_job = NULL;
 }
 
 void print_jobs() {
@@ -315,7 +286,6 @@ void bg(char *num_str) {
 	}
 
 	curr_job = jobs[job_num];
-
 	if (jobs[job_num]->status == STOPPED) { // if it is stopped, then move to fg and continue
 		kill(-1 * jobs[job_num]->pgid, SIGCONT);
 	} else { // if its running in bg, then just move to fg
@@ -420,11 +390,11 @@ int kill_cmd(int argc, char *argv[]) {
  * This function is responsible for cycling through the
  * tasks, and forking, executing, etc as necessary to get
  * the job done! */
-void execute_tasks (Parse* P, Job* J, Job** jobs)
+void execute_tasks (Parse* P, Job* J)
 {
     int fd[2];
 	int prev_fd;
-    pid_t pid[P->ntasks];
+    pid_t *pid = malloc(sizeof(pid_t) * P->ntasks);
 	int fd_in = STDIN_FILENO;
 	int fd_out = STDOUT_FILENO;
     unsigned int t, i;
@@ -446,16 +416,16 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 		_print_job_array();
 		return;
 #endif
-	}	
+	}
+
 	// create new job
 	J->pids = pid;
 	J->npids = P->ntasks;
-
 	
     for (t = 0; t < P->ntasks; t++) {
 		if (!command_found(P->tasks[t].cmd)) {
 			printf("pssh: command not found: %s\n", P->tasks[t].cmd);
-			break;
+			return;
 		} else { 
 			// create a new pipe
 			if (pipe(fd) == -1) {
@@ -529,7 +499,6 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 			} else { /* Parent Process */
 				// if the parent process is not the initial process
 				// then close the the previous file descriptor
-				printf("%d\n", J->pids[t]);
 				if (t > 0) {
 					close(prev_fd);
 				}
@@ -546,18 +515,19 @@ void execute_tasks (Parse* P, Job* J, Job** jobs)
 	}
 
 	J->pgid = pid[0];
-	if (P->background) {
+
+	if (!P->background) { 
+		J->status = FG;
+		set_fg_pgrp(pid[0]);
+	} else {
 		J->status = BG;
 		printf("[%d] ", J->job_num);
 		for (i=0; i<P->ntasks; i++) {
 			printf("%d ", J->pids[i]);
 		}
 		printf("\n");
-	} else { 
-		J->status = FG;
-		set_fg_pgrp(pid[0]);
 	}
-
+	
 	add_new_job(J);
 }
 
@@ -596,7 +566,7 @@ int main (int argc, char** argv)
         parse_debug (P);
 #endif
 
-        execute_tasks (P, new_job, jobs);
+        execute_tasks (P, new_job);
     next:
         parse_destroy (&P);
         free(cmdline);
