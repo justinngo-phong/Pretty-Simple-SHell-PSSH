@@ -161,6 +161,19 @@ int job_finished(int job_num) {
 	return 1;
 }
 
+void get_curr_job(pid_t pid) {
+	int i, j;
+	for (i=0; i<MAX_JOBS; i++) {
+		if (jobs[i]) {
+			for (j=0; j<jobs[i]->npids; j++) {
+				if (jobs[i]->pids[j] == pid) {
+					curr_job = jobs[i];
+					return;
+				}
+			}
+		}
+	}
+}
 
 void terminate_job(int job_num) {
 	free(jobs[job_num]->name);
@@ -174,11 +187,15 @@ void handler(int sig) {
 	pid_t chld;
 	int status;
 	
-	if ((sig == SIGTTOU) || (sig == SIGTTIN)) {
+	if (sig == SIGTTOU) {
 		while (tcgetpgrp(STDOUT_FILENO) != getpgrp()) 
+			pause();
+	} else if (sig == SIGTTIN) {
+		while (tcgetpgrp(STDIN_FILENO) != getpgrp()) 
 			pause();
 	} else if (sig == SIGCHLD) {
 		while ((chld = waitpid(-1, &status, WNOHANG|WUNTRACED|WCONTINUED)) > 0) {
+			get_curr_job(chld);
 			if (WIFSTOPPED(status)) {
 				set_fg_pgrp(0);
 				curr_job->status = STOPPED;
@@ -293,96 +310,53 @@ void bg(char *num_str) {
 	}
 }
 
-
-const char *sigabbrev(unsigned int sig)
-{
-	const char *sigs[31] = { "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", 
-		"BUS", "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM",
-		"TERM", "STKFLT", "CHLD", "CONT", "STOP", "TSTP", "TTIN",
-		"TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO",
-		"PWR", "SYS" };
-	if (sig > 31)
-		return NULL;
-	return sigs[sig-1];
+void kill_usage() {
+	printf("Usage: kill [-s <signal>] <pid> | %%<job> ...\n");
 }
 
-void signals_list() {
-	int i;
-	for (i=1; i<=31; i++) {
-		printf("%2d) SIG%s\t%s\n", i, sigabbrev(i), strsignal(i));
-	}
-}
-
-void usage() {
-	printf("Usage: ./signal [options] <pid>\n");
-	printf("\n");
-	printf("Options:\n");
-	printf("\t-s <signal>\tSends <signal> to <pid>\n");
-	printf("\t-l\t\tLists all signal numbers with their names\n");
-}
-
-int kill_cmd(int argc, char *argv[]) {
-	int opt;
+void kill_cmd(Task T) {
+	int i = 1;
 	int sig = SIGTERM;
 	int pid;
+	int signal_sent;
+	int job_num;
 
-	if (argc == 1) {
-		usage();
-		return 1;
+	// check if possible
+	if (!T.argv[1]) { // there is no argument
+		kill_usage();
+		return;
 	}
-	
-	// get the options
-	while ((opt = getopt(argc, argv, "ls:")) != -1) {
-		switch (opt) {
-			case 's':
-				// get the signal number
-				sig = atoi(optarg);
-				break;
-			case 'l':
-				signals_list();
-				return 0;
-			default:
-				usage();
-				return 1;
+
+	if (!strcmp(T.argv[1], "-s")) { // if -s flag is supplied
+		if (!T.argv[2]) { // example: kill -s => not enough
+			kill_usage();
+			return;
+		} else if (!T.argv[3]) { // example: kill -s 0 => still not enough (no pid or job args)
+			kill_usage();
+			return;
+		}	
+		sig = atoi(T.argv[2]);
+		i = 3; // start iterating from the argv[3]
+	}
+
+
+	while (T.argv[i]) {
+		if (T.argv[i][0] == '%') { // is a job
+			job_num = atoi(T.argv[i] + 1);
+			if (jobs[job_num] == NULL) {
+				printf("pssh: invalid job number: %s\n", T.argv[i]);
+			} else {
+				signal_sent = kill(-1*jobs[job_num]->pgid, sig);
+			}
+		} else {
+			pid = atoi(T.argv[i]);
+			signal_sent = kill(pid, sig);
+			if (signal_sent == -1) {
+				printf("pssh: invalid pid: %s\n", T.argv[i]);
+			}
 		}
-	}	
-
-	// if optind (option index from the getopt function) is greater than the argument count then printout the usage
-	if (argc <= optind) {
-		usage();
-		return 1;
+		i++;
 	}
-
-	// get pid which is at index optind of the argument list
-	pid = atoi(argv[optind]);
-
-	// send the signal to pid with the kill function
-	int signal_sent = kill(pid, sig);
-
-	// if the return value of kill is -1 then there are errors
-	if (signal_sent == -1) {
-		switch (errno) {
-			case EINVAL:
-				printf("%d is an invalid signal\n", sig);
-				return 1;
-			case EPERM:
-				printf("PID %d exists, but we can't send it signals\n", pid);
-				return 1;
-			case ESRCH:
-				printf("PID %d does not exist\n", pid);
-				return 1;
-			default:
-				printf("Cannot send signal %d to PID %d\n", sig, pid);
-				return 1;
-		}
-	}
-
-	// if signal number is 0 and there is no err, then PID exists and can receive signals
-	if ((sig == 0) && (signal_sent != -1)) {
-		printf("PID %d exists and is able to receive signals\n", pid);
-	}
-
-	return 0;
 }
 
 	
@@ -410,6 +384,9 @@ void execute_tasks (Parse* P, Job* J)
 		return;
 	} else if (!strcmp(P->tasks[0].cmd, "bg")) {
 		bg(P->tasks[0].argv[1]);
+		return;
+	} else if (!strcmp(P->tasks[0].cmd, "kill")) {
+		kill_cmd(P->tasks[0]);
 		return;
 #if DEBUG_PRINT
 	} else if (!strcmp(P->tasks[0].cmd, "p")) {
