@@ -14,7 +14,7 @@
  * Set DEBUG_PARSE to 1 to view the command line parse 			*
  * Set DEBUG_PRINT to 1 to use p to print out job array content *
  ***************************************************************/
-#define DEBUG_PARSE 1
+#define DEBUG_PARSE 0
 #define DEBUG_PRINT 0
 #define MAX_JOBS 100
 
@@ -213,9 +213,9 @@ void print_jobs() {
 	for (i=0; i<MAX_JOBS; i++) {
 		if (jobs[i] != NULL) {
 			if (jobs[i]->status == STOPPED) {
-				printf("[%d] + stopped\t%s\n", i, jobs[i]->name);
+				printf("[%d] + stopped     %s\n", i, jobs[i]->name);
 			} else if (jobs[i]->status == BG || jobs[i]->status == FG) {
-				printf("[%d] + running\t%s\n", i, jobs[i]->name);
+				printf("[%d] + running     %s\n", i, jobs[i]->name);
 			} 
 		}
 	}
@@ -348,22 +348,26 @@ void handler(int sig) {
 		while ((chld = waitpid(-1, &status, WNOHANG|WUNTRACED|WCONTINUED)) > 0) {
 			get_curr_job(chld); // get the current job pointer
 			if (WIFSTOPPED(status)) {
+				if (curr_job->status != STOPPED) {
 					set_fg_pgrp(0);
 					curr_job->status = STOPPED;
-					printf("[%d] + suspended\t%s\n", curr_job->job_num, curr_job->name);
+					printf("\n[%d] + suspended   %s\n", curr_job->job_num, curr_job->name);
+				}
 			} else if (WIFCONTINUED(status)) {
+				if (curr_job->status == STOPPED) {
 					if (getpgid(chld) != tcgetpgrp(STDOUT_FILENO)) { // if process is not in the foreground, then run it in background
 						curr_job->status = BG;
-						printf("[%d] + continued\t%s\n", curr_job->job_num, curr_job->name);
+						printf("[%d] + continued   %s\n", curr_job->job_num, curr_job->name);
 					} else { // for process in the foreground
 						curr_job->status = FG;
 					}
+				}
 			} else {
 				remove_pid(curr_job->job_num, chld); // remove the child pid from the current job
 				if (job_finished(curr_job->job_num)) { // if current job doesn't have any more pids, then terminate
 					set_fg_pgrp(0);
 					if (curr_job->status == BG) {  // only print out done if job status is background
-						printf("\n[%d] + done   \t%s\n", curr_job->job_num, curr_job->name);
+						printf("\n[%d] + done        %s\n", curr_job->job_num, curr_job->name);
 					}
 					terminate_job(curr_job->job_num); // terminate the job by freeing its memory and set its position in the job array to NULL
 				}
@@ -482,6 +486,7 @@ void execute_tasks (Parse* P, Job* J)
 
 	// set job pgid to the leader's pid
 	J->pgid = pid[0];
+	add_new_job(J);
 
 	// run job either in background or foreground
 	if (!P->background) { 
@@ -496,7 +501,6 @@ void execute_tasks (Parse* P, Job* J)
 		printf("\n");
 	}
 	
-	add_new_job(J);
 }
 
 int main (int argc, char** argv)
@@ -517,6 +521,7 @@ int main (int argc, char** argv)
 		char *prompt = build_prompt();
         cmdline = readline (prompt);
 		free(prompt);
+		new_job->name = strdup(cmdline);
         if (!cmdline)       /* EOF (ex: ctrl-d) */
             exit (EXIT_SUCCESS);
 
@@ -531,29 +536,23 @@ int main (int argc, char** argv)
 
 		if (!strcmp(P->tasks[0].cmd, "exit")) {
 			builtin_execute(P->tasks[0]);
-			// return;
             goto next;
 		} else if (!strcmp(P->tasks[0].cmd, "jobs")) {
 			print_jobs();
-			// return;
             goto next;
 		} else if (!strcmp(P->tasks[0].cmd, "fg")) {
 			fg(P->tasks[0].argv[1]);
-			// return;
             goto next;
 		} else if (!strcmp(P->tasks[0].cmd, "bg")) {
 			bg(P->tasks[0].argv[1]);
-			// return;
             goto next;
 		} else if (!strcmp(P->tasks[0].cmd, "kill")) {
 			kill_cmd(P->tasks[0]);
-			// return;
             goto next;
 #if DEBUG_PRINT
 		} else if (!strcmp(P->tasks[0].cmd, "p")) {
 			_print_job_array();
-			return;
-            // goto next;
+            goto next;
 #endif
 		}
 
@@ -562,7 +561,6 @@ int main (int argc, char** argv)
         parse_debug (P);
 #endif
 
-		new_job->name = strdup(cmdline);
         execute_tasks (P, new_job);
     next:
         parse_destroy (&P);
