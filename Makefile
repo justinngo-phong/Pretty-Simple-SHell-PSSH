@@ -23,3 +23,4 @@ clean:
 	-rm -f *.o
 	-rm -f $(TARGET)
 	-rm -f *.txt
+	-rm -f core.*
