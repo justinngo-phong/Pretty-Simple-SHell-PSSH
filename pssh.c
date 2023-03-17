@@ -223,8 +223,13 @@ void print_jobs() {
 
 /* move job to foreground and continue */
 void fg(char *num_str) {
-	if (num_str == NULL || num_str[0] != '%') {  
+	if (num_str == NULL) {  
 		printf("Usage: fg %%<job number>\n");
+		return;
+	}
+
+	if (num_str[0] != '%') {  
+		printf("pssh: invalid job number: %s\n", num_str);
 		return;
 	}
 
@@ -243,18 +248,20 @@ void fg(char *num_str) {
 	}
 
 	curr_job = jobs[job_num];
+	jobs[job_num]->status = FG;
 	set_fg_pgrp(jobs[job_num]->pgid);
-	if (curr_job->status == STOPPED) { // if it is stopped, then move to fg and continue
-		kill(-1 * curr_job->pgid, SIGCONT);
-	} else { // if its running in bg, then just move to fg
-		curr_job->status = FG;
-	}
+	kill(-1 * jobs[job_num]->pgid, SIGCONT);
 }
 
 /* continue job in background */
 void bg(char *num_str) {
-	if (num_str == NULL || num_str[0] != '%') {  
+	if (num_str == NULL) { 
 		printf("Usage: fg %%<job number>\n");
+		return;
+	}
+
+	if (num_str[0] != '%') {  
+		printf("pssh: invalid job number: %s\n", num_str);
 		return;
 	}
 
@@ -353,15 +360,13 @@ void handler(int sig) {
 					curr_job->status = STOPPED;
 					printf("\n[%d] + suspended   %s\n", curr_job->job_num, curr_job->name);
 				}
+				continue;
 			} else if (WIFCONTINUED(status)) {
 				if (curr_job->status == STOPPED) {
-					if (getpgid(chld) != tcgetpgrp(STDOUT_FILENO)) { // if process is not in the foreground, then run it in background
-						curr_job->status = BG;
-						printf("[%d] + continued   %s\n", curr_job->job_num, curr_job->name);
-					} else { // for process in the foreground
-						curr_job->status = FG;
-					}
+					curr_job->status = BG;
+					printf("[%d] + continued   %s\n", curr_job->job_num, curr_job->name);
 				}
+				continue;
 			} else {
 				remove_pid(curr_job->job_num, chld); // remove the child pid from the current job
 				if (job_finished(curr_job->job_num)) { // if current job doesn't have any more pids, then terminate
