@@ -1,4 +1,4 @@
-# Pretty Simple SHell (pssh) Project - ECEC 353: System Programming
+# Pretty Simple SHell (pssh) Project
 
 Written by: Justin Ngo <br />
 Last updated on: 3/16/2023 <br />
